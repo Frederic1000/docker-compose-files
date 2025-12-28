@@ -13,6 +13,7 @@ Services:
 - Duplicati: Backup of Home Assistant configuration files
 - AdGuard: ad blocking software, over Tailscale= also active out of home. It will block ads to all machines connected to the Tailscale network (pc, mac, phones,...)
 - Stirling pdf: pdf edition
+- Whoami: light web page to check that tsdproxy/tailscale is working as intended.
 - Node-red (uncomment to use): home automation
 - NightScout-LibreLink-Up (uncomment to use): Upload LibreLink data to NightScout database
 
