@@ -23,9 +23,9 @@ services:
       tsdproxy:
         ipv4_address: 10.10.10.10
     labels:
-      - tsdproxy.enable=true
-      - tsdproxy.ephemeral=false
-      - tsdproxy.name="tsdproxy-${DOCKER_MACHINE}"
+      tsdproxy.enable: "true"
+      tsdproxy.ephemeral: "false"
+      tsdproxy.name: "tsdproxy-${DOCKER_MACHINE}"
 
 
   wireguard:
