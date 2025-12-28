@@ -1,0 +1,214 @@
+services:
+
+  # tsdproxy will create one Tailscale machine per container
+  # no need to create the Tailscale container for tsdproxy
+  # just provide a Tailscale reusable Auth key in the .env file
+  # and add labels to the containers, for example:
+  # labels:
+  #   tsdproxy.enable: "true"
+  #   tsdproxy.name: "name-on-tailnet"
+  #   tsdproxy.container_port: 80 # give internal port to tsdproxy
+  tsdproxy:
+    image: almeidapaulopt/tsdproxy:1
+    container_name: tsdproxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - datadir:/data
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+    restart: unless-stopped
+    ports:
+      - "8888:8080"
+    networks:
+      tsdproxy:
+        ipv4_address: 10.10.10.10
+    labels:
+      - tsdproxy.enable=true
+      - tsdproxy.ephemeral=false
+      - tsdproxy.name="tsdproxy-${DOCKER_MACHINE}"
+
+
+  wireguard:
+    image: lscr.io/linuxserver/wireguard
+    container_name: wireguard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Paris
+      - SERVEURURL=${DOCKER_MACHINE}-ha.duckdns.org
+      - SERVERPORT=51820           #optional
+      - PEERS=1                    #optional
+      - PEERDNS=auto               #optional
+      - INTERNAL_SUBNET=10.10.10.0 #optional
+    volumes:
+      - /homeassistant/wireguard/config:/config
+      - /lib/modules:/lib/modules
+    ports:
+      - 51820:51820/udp
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+
+
+  homeassistant:
+    container_name: homeassistant
+    image: "ghcr.io/home-assistant/home-assistant:stable"
+    volumes:
+      - /homeassistant/config:/config
+      - /etc/localtime:/etc/localtime:ro
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0  # Zigbee USB key
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "ha-${DOCKER_MACHINE}"
+      tsdproxy.container_port: 8123
+
+
+  mosquitto:
+    container_name: mosquitto
+    image: "eclipse-mosquitto"
+    volumes:
+      - /homeassistant/mosquitto/config:/mosquitto/config
+      - /homeassistant/mosquitto/data:/mosquitto/data
+      - /homeassistant/mosquitto/log:/mosquitto/log
+    restart: always
+    privileged: true
+    network_mode: host
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "mqtt-${DOCKER_MACHINE}"
+      tsdproxy.container_port: 1883
+
+
+  duplicati:
+    image: lscr.io/linuxserver/duplicati:latest
+    container_name: duplicati
+    environment:
+      - PUID=0 #root
+      - PGID=0 #root
+      - TZ=Europe/Paris
+      - CLI_ARGS= #optional
+      - SETTINGS_ENCRYPTION_KEY=${DOCKER_MACHINE}-ha
+      - DUPLICATI__WEBSERVICE_PASSWORD=${DOCKER_MACHINE}-ha
+    volumes:
+      - /homeassistant/duplicati/config:/config
+      - /homeassistant:/source
+    ports:
+      - 8200:8200
+    restart: unless-stopped
+    labels:
+      - "tsdproxy.enable=true"
+      - "tsdproxy.name=duplicati-${DOCKER_MACHINE}"
+      - "tsdproxy.container_port=8200"
+
+
+# adguard:
+# initial setup : http://adguard-${DOCKER_MACHINE}:3000
+# Web UI after first configuration : http://adguard-${DOCKER_MACHINE}
+# DNS: HOST IP (local 192.X.X.X or Tailscale HOST IP), not this service IP
+# Tailscale is also installed directly on the host (not via docker)
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard
+    restart: unless-stopped
+    volumes:
+      - ./adguard/work:/opt/adguardhome/work
+      - ./adguard/conf:/opt/adguardhome/conf
+    networks:
+      - tsdproxy
+    ports:
+      - "3000:3000" # initial Web UI
+      - "3080:80"   # Web UI
+      - "53:53/udp" # DNS
+      - "53:53/tcp" # DNS
+    labels:
+      # --- WEB UI accessible via tsdproxy
+      tsdproxy.enable: "true"
+      tsdproxy.name: "adguard-${DOCKER_MACHINE}"
+      # --- Web UI
+      tsdproxy.container_port: "80"
+      # --- DNS
+      # DNS is done with HOST Tailscale IP, not adguard TS IP
+
+
+  stirling-pdf:
+    image: stirlingtools/stirling-pdf:latest
+    container_name: stirling-pdf
+    ports:
+      - "8085:8080"
+    environment:
+    - SPRING_FORWARD_HEADERS_STRATEGY=framework
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "stirling-pdf"
+      tsdproxy.port: "8080" # tsdproxy -> internal port 8080
+    restart: unless-stopped
+
+
+  whoami:
+    image: traefik/whoami
+    container_name: whoami
+    ports:
+      - "8080:80"
+    labels:
+      tsdproxy.enable: "true"
+      tsdproxy.name: "whoami-${DOCKER_MACHINE}"
+      tsdproxy.container_port: 80 # tsdproxy -> internal port 80
+    restart: unless-stopped
+
+
+#  node-red:
+#    container_name: node-red
+#    image: nodered/node-red:latest
+#    environment:
+#      - TZ=Europe/Paris
+#    ports:
+#      - "1880:1880"
+#    networks:
+#      - node-red-net
+#    volumes:
+#      - /homeassistant/node-red/data:/data
+#    restart: unless-stopped
+#    labels:
+#      - tsdproxy.enable: "true"
+#      - tsdproxy.name: "node-red-${DOCKER_MACHINE}"
+#      - tsdproxy.container_port: 1880
+#      #- tsdproxy.scheme: "https"
+#      #- tsdproxy.tlsvalidate= "false"
+
+
+#  nightscout-libre-link:
+#    image: timoschlueter/nightscout-librelink-up
+#    container_name: nightscout-libre-link
+#    environment:
+#      LINK_UP_USERNAME: ${LINK_UP_USERNAME}
+#      LINK_UP_PASSWORD: ${LINK_UP_PASSWORD}
+#      LINK_UP_TIME_INTERVAL: "2"
+#      LINK_UP_REGION: "FR"
+#      NIGHTSCOUT_URL: ${NIGHTSCOUT_URL}
+#      NIGHTSCOUT_API_TOKEN: ${NIGHTSCOUT_API_TOKEN}
+#      NIGHTSCOUT_DEVICE_NAME: ${NIGHTSCOUT_DEVICE_NAME}
+#      LOG_LEVEL: "debug"
+#    restart: unless-stopped
+
+
+volumes:
+#  tailscale-tsdproxy-state:
+  datadir:
+#  node-red-data:
+
+
+networks:
+  tsdproxy:
+    name: tsdproxy
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24
+#  node-red-net:
